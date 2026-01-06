@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Tracker Pro</title>
+    <style>
+        :root { --primary: #4a90e2; --danger: #e74c3c; --success: #27ae60; --bg: #f4f7f6; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background: var(--bg); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { width: 100%; max-width: 600px; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .timer-display { font-size: 3rem; font-weight: bold; text-align: center; margin: 20px 0; color: #333; font-variant-numeric: tabular-nums; }
+        .input-group { margin-bottom: 20px; }
+        input[type="text"] { width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 1rem; outline: none; }
+        input[type="text"]:focus { border-color: var(--primary); }
+        .controls { display: flex; gap: 10px; margin-bottom: 30px; }
+        button { flex: 1; padding: 12px; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; font-weight: bold; }
+        #startBtn { background: var(--primary); color: white; }
+        #stopBtn { background: var(--danger); color: white; display: none; }
+        
+        /* フィルターとCSVボタン */
+        .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 2px solid #eee; padding-bottom: 10px; flex-wrap: wrap; gap: 10px; }
+        .filters { display: flex; gap: 5px; }
+        .filter-btn { background: #eee; color: #666; font-size: 0.75rem; padding: 5px 10px; border-radius: 20px; width: auto; flex: none; }
+        .filter-btn.active { background: var(--primary); color: white; }
+        #csvBtn { background: var(--success); color: white; font-size: 0.75rem; padding: 5px 12px; border-radius: 4px; width: auto; flex: none; }
+
+        .history-list { list-style: none; padding: 0; }
+        .history-item { background: #fafafa; border: 1px solid #eee; padding: 12px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .history-info { display: flex; flex-direction: column; gap: 4px; }
+        .history-memo { font-weight: bold; color: #333; }
+        .history-time { font-size: 0.85rem; color: #888; }
+        .delete-btn { background: none; color: #bbb; border: 1px solid #ddd; padding: 4px 8px; font-size: 0.75rem; width: auto; }
+        .empty-msg { text-align: center; color: #999; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>タイムトラッカー</h2>
+    
+    <div class="input-group">
+        <input type="text" id="memoInput" placeholder="何をしていますか？">
+    </div>
+    <div class="timer-display" id="display">00:00:00</div>
+    <div class="controls">
+        <button id="startBtn" onclick="startTimer()">計測開始</button>
+        <button id="stopBtn" onclick="stopTimer()">ストップ</button>
+    </div>
+
+    <div class="toolbar">
+        <div class="filters">
+            <button class="filter-btn active" onclick="setFilter('all', this)">すべて</button>
+            <button class="filter-btn" onclick="setFilter('day', this)">前日</button>
+            <button class="filter-btn" onclick="setFilter('week', this)">1週間</button>
+            <button class="filter-btn" onclick="setFilter('month', this)">今月</button>
+        </div>
+        <button id="csvBtn" onclick="downloadCSV()">CSV出力</button>
+    </div>
+
+    <div id="historyContainer">
+        <ul class="history-list" id="historyList"></ul>
+    </div>
+</div>
+
+<script>
+    let startTime;
+    let timerInterval;
+    let logs = JSON.parse(localStorage.getItem('timeLogs')) || [];
+    let currentFilter = 'all';
+
+    function startTimer() {
+        startTime = new Date();
+        timerInterval = setInterval(updateDisplay, 1000);
+        document.getElementById('startBtn').style.display = 'none';
+        document.getElementById('stopBtn').style.display = 'block';
+        document.getElementById('memoInput').disabled = true;
+    }
+
+    function updateDisplay() {
+        const diff = new Date(new Date() - startTime);
+        const h = String(Math.floor(diff / 3600000)).padStart(2, '0');
+        const m = String(Math.floor((diff % 3600000) / 60000)).padStart(2, '0');
+        const s = String(Math.floor((diff % 60000) / 1000)).padStart(2, '0');
+        document.getElementById('display').textContent = `${h}:${m}:${s}`;
+    }
+
+    function stopTimer() {
+        clearInterval(timerInterval);
+        const duration = document.getElementById('display').textContent;
+        const newLog = {
+            id: Date.now(),
+            memo: document.getElementById('memoInput').value || '名称未設定',
+            start: startTime.toISOString(),
+            duration: duration
+        };
+        logs.unshift(newLog);
+        localStorage.setItem('timeLogs', JSON.stringify(logs));
+        renderLogs();
+
+        document.getElementById('display').textContent = '00:00:00';
+        document.getElementById('memoInput').value = '';
+        document.getElementById('memoInput').disabled = false;
+        document.getElementById('startBtn').style.display = 'block';
+        document.getElementById('stopBtn').style.display = 'none';
+    }
+
+    function deleteLog(id) {
+        if(confirm('削除しますか？')) {
+            logs = logs.filter(log => log.id !== id);
+            localStorage.setItem('timeLogs', JSON.stringify(logs));
+            renderLogs();
+        }
+    }
+
+    function setFilter(filter, btn) {
+        currentFilter = filter;
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderLogs();
+    }
+
+    function getFilteredLogs() {
+        const now = new Date();
+        return logs.filter(log => {
+            const logDate = new Date(log.start);
+            if (currentFilter === 'day') {
+                const yesterday = new Date(); yesterday.setDate(now.getDate() - 1);
+                return logDate.toDateString() === yesterday.toDateString();
+            }
+            if (currentFilter === 'week') {
+                const lastWeek = new Date(); lastWeek.setDate(now.getDate() - 7);
+                return logDate >= lastWeek;
+            }
+            if (currentFilter === 'month') {
+                return logDate.getMonth() === now.getMonth() && logDate.getFullYear() === now.getFullYear();
+            }
+            return true;
+        });
+    }
+
+    function renderLogs() {
+        const list = document.getElementById('historyList');
+        list.innerHTML = '';
+        const filtered = getFilteredLogs();
+
+        if (filtered.length === 0) {
+            list.innerHTML = '<div class="empty-msg">記録がありません</div>';
+            return;
+        }
+
+        filtered.forEach(log => {
+            const dateStr = new Date(log.start).toLocaleString('ja-JP');
+            const li = document.createElement('li');
+            li.className = 'history-item';
+            li.innerHTML = `
+                <div class="history-info">
+                    <span class="history-memo">${log.memo}</span>
+                    <span class="history-time">${dateStr} | 経過: ${log.duration}</span>
+                </div>
+                <button class="delete-btn" onclick="deleteLog(${log.id})">削除</button>
+            `;
+            list.appendChild(li);
+        });
+    }
+
+    function downloadCSV() {
+        const filtered = getFilteredLogs();
+        if (filtered.length === 0) return alert('出力するデータがありません');
+
+        let csvContent = "\uFEFF"; // Excel文字化け防止(BOM)
+        csvContent += "開始日時,メモ,経過時間\n";
+        
+        filtered.forEach(log => {
+            const dateStr = new Date(log.start).toLocaleString('ja-JP');
+            csvContent += `"${dateStr}","${log.memo}","${log.duration}"\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `work_log_${currentFilter}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    renderLogs();
+</script>
+</body>
+</html>
